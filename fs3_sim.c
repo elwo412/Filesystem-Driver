@@ -134,6 +134,7 @@ int main( int argc, char *argv[] ) {
 	FS3DriverLLevel= registerLogLevel("FS3_DRIVER", 0);          // Driver log level
 	FS3SimulatorLLevel= registerLogLevel("FS3_SIMULATOR", 0);    // Driver log level
 	if ( verbose ) {
+		//enableLogLevels(LOG_INFO_LEVEL); //disable later
 		enableLogLevels(FS3ControllerLLevel | FS3DriverLLevel | FS3SimulatorLLevel);
 	}
 

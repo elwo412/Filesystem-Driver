@@ -13,6 +13,7 @@
 
 // Include files
 #include <stdint.h>
+#include <fs3_controller.h>
 
 // Defines
 #define FS3_MAX_TOTAL_FILES 1024 // Maximum number of files ever
@@ -41,5 +42,8 @@ int32_t fs3_write(int16_t fd, void *buf, int32_t count);
 
 int32_t fs3_seek(int16_t fd, uint32_t loc);
 	// Seek to specific point in the file
+
+FS3CmdBlk makeCmdBlock(uint8_t opcode, uint16_t sectorNumber, uint32_t trackNumber, uint8_t returnValue);
+	// Constructs a command block
 
 #endif

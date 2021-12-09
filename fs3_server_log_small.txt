@@ -1,0 +1,20 @@
+Wed Dec  8 17:10:10 2021 [INFO] FS3 server bound and listening on port [22887]
+Wed Dec  8 17:10:40 2021 [INFO] FS3 server new client connection [127.0.0.1/20642]
+Wed Dec  8 17:10:40 2021 [INFO] ----------
+Wed Dec  8 17:10:40 2021 [INFO] Received 8 cmdblk bytes on handle 5
+Wed Dec  8 17:10:40 2021 [INFO] Received 8 bytes on handle 5
+Wed Dec  8 17:10:40 2021 [FS3_CONTROLLER] Initializing disk system ...
+Wed Dec  8 17:10:40 2021 [FS3_CONTROLLER] FS3 system initialized.
+Wed Dec  8 17:10:40 2021 [INFO] Sending 8 bytes on handle 5
+Wed Dec  8 17:10:40 2021 [INFO] ----------
+Wed Dec  8 17:10:42 2021 [INFO] Received 8 cmdblk bytes on handle 5
+Wed Dec  8 17:10:42 2021 [INFO] Received 8 bytes on handle 5
+Wed Dec  8 17:10:42 2021 [ERROR] FS3 MOUNT: fail, mounting a mounted system
+Wed Dec  8 17:10:42 2021 [INFO] Sending 8 bytes on handle 5
+Wed Dec  8 17:10:42 2021 [INFO] ----------
+Wed Dec  8 17:53:32 2021 [WARNING] CMPSC311 signal received (2), shutting down.
+Wed Dec  8 17:53:32 2021 [ERROR] CMPSC311 read bytes failed : [Interrupted system call]
+Wed Dec  8 17:53:32 2021 [ERROR] FS3 receive packet header/command block failed : [Interrupted system call]
+Wed Dec  8 17:53:32 2021 [ERROR] fs3 receive failed : [Interrupted system call]
+Wed Dec  8 17:53:32 2021 [INFO] FS3 closing client connection [127.0.0.1/20642]
+Wed Dec  8 17:53:32 2021 [INFO] Shutting down fs3 server ...

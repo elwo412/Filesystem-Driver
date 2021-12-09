@@ -1,0 +1,14 @@
+Wed Dec  8 17:10:40 2021 [OUTPUT] OPCODE RECIEVED: 0
+Wed Dec  8 17:10:40 2021 [OUTPUT] [CMDBLK] 0000000000000000000000000000000000000000000000000000000000000000
+Wed Dec  8 17:10:40 2021 [OUTPUT] Mounted Disk, Returned: 0 
+Wed Dec  8 17:10:40 2021 [FS3_DRIVER] FS3 DRVR: mounted.
+Wed Dec  8 17:10:40 2021 [FS3_SIMULATOR] FS3 simulator initialization complete.
+Wed Dec  8 17:10:40 2021 [FS3_SIMULATOR] File [assign4-small/sourcedata0F.txt], command [WRITE], len=165, offset=0
+Wed Dec  8 17:10:40 2021 [FS3_SIMULATOR] FS3_SIM : Opening file [assign4-small/sourcedata0F.txt]
+Wed Dec  8 17:10:40 2021 [FS3_DRIVER] Driver creating new file [assign4-small/sourcedata0F.txt]
+Wed Dec  8 17:10:40 2021 [FS3_DRIVER] File [assign4-small/sourcedata0F.txt] opened in driver, fh, 5.
+Wed Dec  8 17:10:40 2021 [FS3_SIMULATOR] FS3_SIM : Writing 165 bytes to file [assign4-small/sourcedata0F.txt]
+Wed Dec  8 17:10:40 2021 [FS3_DRIVER] FS3 driver: allocated fs3 track 0, sector 0 for fh/index 5/0
+Wed Dec  8 17:10:42 2021 [OUTPUT] OPCODE RECIEVED: 1
+Wed Dec  8 17:10:42 2021 [OUTPUT] [CMDBLK] 0001000000000000000000000000000000000000000000000000000000000000
+Wed Dec  8 17:10:42 2021 [OUTPUT] Seeking to track: 0 

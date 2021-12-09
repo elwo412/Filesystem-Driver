@@ -41,6 +41,12 @@ typedef enum {
 } FS3OpCodes;
 
 //
+// Global Data ?? wasnt here before?
+//extern unsigned long FS3ControllerLLevel;  // Controller log level
+extern unsigned long FS3DriverLLevel;      // Driver log level
+//extern unsigned long FS3SimulatorLLevel;   // Driver log level
+
+//
 // Functional Prototypes
 
 
