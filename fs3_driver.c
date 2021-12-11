@@ -18,22 +18,26 @@
 
 // Project Includes
 #include <fs3_driver.h>
-#include <fs3_common.h>
 
 //
 // Defines
 #define SECTOR_INDEX_NUMBER(x) ((int)(x/FS3_SECTOR_SIZE))
-#define FILE_TRACK_CAP 64 //Files to keep track of
+#define FILE_TRACK_CAP 300 //Files to keep track of
 
 //
 // Static Global Variables
+
+typedef struct{
+	int track;
+	int sector;
+} tsTuple;
+
 
 //struct for keeping file state aka its file flags
 typedef struct{
 	int isOpen;
 	int index;
-	int track[50];
-	int sector;
+	tsTuple ts[FS3_TRACK_SIZE*2]; //NOTE: change back to reasonable value later
 	int position;
 	int length;
 	int fileHandle;
@@ -49,7 +53,9 @@ typedef struct{
 } deconstVals;
 
 flags files[FILE_TRACK_CAP] = {{0}}; //arbitrary number of files to keep track of
-int tracksOccupied[FS3_MAX_TRACKS] = {0}; //iterate over tracks occupied until 1 is available
+//MAYBE: Dont think i need --> int tracksFullyOccupied[FS3_MAX_TRACKS] = {0}; //TODO: change to tracksFullyOccupied and change subsequent code appriopriatly ... |> iterate over tracks occupied until 1 is available
+int lastAllocatedTrack;
+int lastAllocatedSector; //NOTE: MUST only update if sector written was on the last allocated track
 
 uint64_t cmdblock;
 int isMounted;
@@ -59,17 +65,20 @@ flags currentFile; //only really used to create data structure for file to keep 
 //
 // Implementation
 
-int findEmptyTrack(){
-	int x = 0;
-	while(tracksOccupied[x] != 0){
-		x++;
-		if(x == FS3_MAX_TRACKS) return -1;
-	}
-	tracksOccupied[x] = 1;
-	return x;
+tsTuple findEmptySector(){ //TODO: need to switch this with sectors essentially
+	tsTuple nextEmpty;
+	
+	if(lastAllocatedSector + 1 >= FS3_TRACK_SIZE){
+		lastAllocatedSector = 0;
+		lastAllocatedTrack += 1;
+	} else lastAllocatedSector += 1;
+
+	nextEmpty.track = lastAllocatedTrack;
+	nextEmpty.sector = lastAllocatedSector;
+	return nextEmpty;
 }
 
-void printCmdBlock(FS3CmdBlk cmdblk, int lvl){
+void printCmdBlock(FS3CmdBlk cmdblk){
 	char charCMDBLK[64] = {[0 ... 63] = '0'};
 	int x = 0;
 	while(cmdblk){
@@ -82,8 +91,7 @@ void printCmdBlock(FS3CmdBlk cmdblk, int lvl){
 		x++;
 	}
 	charCMDBLK[64] = '\0';
-	if (lvl == 0) logMessage(LOG_INFO_LEVEL, "[CMDBLK] %s", charCMDBLK);
-	else logMessage(LOG_OUTPUT_LEVEL, "[CMDBLK] %s", charCMDBLK);
+	logMessage(LOG_INFO_LEVEL, "[CMDBLK] %s", charCMDBLK);
 }
 
 FS3CmdBlk makeCmdBlock(uint8_t opcode, uint16_t sectorNumber, uint32_t trackNumber, uint8_t returnValue){
@@ -104,7 +112,7 @@ uint8_t deconstCmdBlock(FS3CmdBlk blk, deconstVals *vals){
 	uint32_t ttrackNumber;
 	uint8_t treturnValue;
 
-	printCmdBlock(blk, 0);
+	printCmdBlock(blk);
 
 	treturnValue = ((uint64_t)blk >> 11) & ((uint64_t)1);
 	ttrackNumber = ((uint64_t)blk >> 12) & ((uint64_t)4294967295);
@@ -115,7 +123,7 @@ uint8_t deconstCmdBlock(FS3CmdBlk blk, deconstVals *vals){
 	logMessage(LOG_INFO_LEVEL, "[CMDBLK] track: %d ", ttrackNumber);
 	logMessage(LOG_INFO_LEVEL, "[CMDBLK] return code: %d ", treturnValue);
 
-	//whole block source of large amount of memory leaks... previously an issue
+	//whole block source of large amount of memory leaks
 	(vals->opcode) = topcode;
 	//logMessage(LOG_INFO_LEVEL, "op: okay ");
 	(vals->sectorNumber) = tsectorNumber;
@@ -154,7 +162,8 @@ int32_t fs3_mount_disk(void) {
 	isMounted = 0;
 
 	if (isMounted == 0){
-		network_fs3_syscall(makeCmdBlock(FS3_OP_MOUNT, 0, 0, 0), 0);
+		cmdblock = makeCmdBlock(FS3_OP_MOUNT, 0, 0, 0);
+		network_fs3_syscall(cmdblock, 0);
 		isMounted = 1;
 		logMessage(FS3DriverLLevel, "FS3 DRVR: mounted.\n");
 		return(0);
@@ -196,8 +205,8 @@ int16_t fs3_open(char *path) {
 	int fileHandle = hash(&filename); //generates filehandle based on filename
 	if ((files[fileHandle].isOpen == NULL)){ //create file
 		currentFile.isOpen = 1;
-		currentFile.track[currentFile.index] = 0; //zero for now, we can allocate track later
-		currentFile.sector = 0;
+		currentFile.ts[currentFile.index].track = 0; 
+		currentFile.ts[currentFile.index].sector = 0;
 		currentFile.position = 0;
 		currentFile.length = 0;
 		currentFile.fileName[strlen(filename)];
@@ -251,7 +260,7 @@ int32_t fs3_read(int16_t fd, void *buf, int32_t count) {
 	if (files[fd].isOpen != 1){
 		return -1; //aborts since file not open
 	}
-	void *resizedBuff = (void *)malloc(FS3_SECTOR_SIZE + 1);
+	void *resizedBuff = (char *)calloc(1024, sizeof(char));
 	byteCount = 0;
 	int offset = 0;
 
@@ -269,62 +278,68 @@ int32_t fs3_read(int16_t fd, void *buf, int32_t count) {
 			logMessage(LOG_INFO_LEVEL, "READ Spanning %d sectors ", span);
 
 			for(int i = 0; i < span; i++){
-				cmdblock = makeCmdBlock(FS3_OP_TSEEK, 0, files[fd].track[files[fd].index], 0); //seeks to the correct track
+				cmdblock = makeCmdBlock(FS3_OP_TSEEK, 0, files[fd].ts[files[fd].index].track, 0); //seeks to the correct track
 				FS3CmdBlk ret = network_fs3_syscall(cmdblock, NULL);
 				int validity = deconstCmdBlock(ret, &vals);
 				if(validity != 0) return -1;
 
-				void *tempc = fs3_get_cache(files[fd].track[files[fd].index], files[fd].sector);
+				void *tempc = fs3_get_cache(files[fd].ts[files[fd].index].track, files[fd].ts[files[fd].index].sector);
 				if (tempc == NULL){
-					cmdblock = makeCmdBlock(FS3_OP_RDSECT, files[fd].sector, 0, 0); //reads the sector
+					cmdblock = makeCmdBlock(FS3_OP_RDSECT, files[fd].ts[files[fd].index].sector, 0, 0); //reads the sector
 					ret = network_fs3_syscall(cmdblock, resizedBuff);
 					int validity = deconstCmdBlock(ret, &vals);
 					if(validity != 0) return -1;
-					fs3_put_cache(files[fd].track[files[fd].index], files[fd].sector, resizedBuff);
+					fs3_put_cache(files[fd].ts[files[fd].index].track, files[fd].ts[files[fd].index].sector, resizedBuff);
 				} else{
-					resizedBuff = (void *)tempc;
+					resizedBuff = (char *)tempc;
 				}
 
 				int adjSectorRead = FS3_SECTOR_SIZE - files[fd].position % 1024;
-				logMessage(LOG_INFO_LEVEL, "%s", (char *)resizedBuff);
+				//logMessage(LOG_INFO_LEVEL, "%s", (char *)resizedBuff);
 				memcpy(buf + offset, resizedBuff + files[fd].position % FS3_SECTOR_SIZE, adjSectorRead); //copies the read bytes into the buffer
 				logMessage(LOG_INFO_LEVEL, "FS3 DRVR: read on fh %d (%d bytes)\n", fd, count);
-
+				
 				offset += adjSectorRead;
-				count -= adjSectorRead;
+				count -= adjSectorRead; 
 				byteCount += adjSectorRead;
 				files[fd].position += adjSectorRead; //updates file pointer
 
 				if(tempc == NULL) free(resizedBuff);
 
-				resizedBuff  = (void *)malloc(FS3_SECTOR_SIZE + 1);
+				resizedBuff  = (char *)malloc(FS3_SECTOR_SIZE + 1);
 
-				if(files[fd].sector + 1 == FS3_TRACK_SIZE){
-					files[fd].index += 1;
-					files[fd].track[files[fd].index] = findEmptyTrack();
+				//REVIEW: new code additions for ts tuple implementation
+				files[fd].index += 1;
+				//files[fd].ts[files[fd].index] = findEmptySector();
+
+				/*
+				if(files[fd].ts[files[fd].index].sector + 1 == FS3_TRACK_SIZE){
+					files[fd].index += 1; //REVIEW: IS THIS CORRECT, PRETTY SURE NOT... NEED TO UPDATE POTENTIALLY
+					files[fd].ts[files[fd].index].track = findEmptyTrack();
 				} else{
 					files[fd].sector += 1;
-				}
+				} */
 				logMessage(LOG_INFO_LEVEL, "BYTECOUNT: %d (position: %d)\n", byteCount, files[fd].position);
 			}
 		} 
 
-		cmdblock = makeCmdBlock(FS3_OP_TSEEK, 0, files[fd].track[files[fd].index], 0); //seeks to the correct track
+		cmdblock = makeCmdBlock(FS3_OP_TSEEK, 0, files[fd].ts[files[fd].index].track, 0); //seeks to the correct track
 		FS3CmdBlk ret = network_fs3_syscall(cmdblock, NULL);
 		int validity = deconstCmdBlock(ret, &vals);
 		if(validity != 0) return -1;
 
-		void *tempc = fs3_get_cache(files[fd].track[files[fd].index], files[fd].sector);
+		void *tempc = fs3_get_cache(files[fd].ts[files[fd].index].track, files[fd].ts[files[fd].index].sector);
 		if (tempc == NULL){
-			cmdblock = makeCmdBlock(FS3_OP_RDSECT, files[fd].sector, 0, 0); //reads the sector
+			cmdblock = makeCmdBlock(FS3_OP_RDSECT, files[fd].ts[files[fd].index].sector, 0, 0); //reads the sector
 			ret = network_fs3_syscall(cmdblock, resizedBuff);
 			int validity = deconstCmdBlock(ret, &vals);
 			if(validity != 0) return -1;
-			fs3_put_cache(files[fd].track[files[fd].index], files[fd].sector, resizedBuff);
+			fs3_put_cache(files[fd].ts[files[fd].index].track, files[fd].ts[files[fd].index].sector, resizedBuff);
 		} else{
-			resizedBuff = (void *)tempc;
+			resizedBuff = (char *)tempc;
 		}
 
+		//logMessage(LOG_INFO_LEVEL, "BUFF? %s", (char *)resizedBuff); 
 		memcpy(buf + offset, resizedBuff + files[fd].position % FS3_SECTOR_SIZE, count); //copies the read bytes into the buffer
 		logMessage(LOG_INFO_LEVEL, "FS3 DRVR: read on fh %d (%d bytes)\n", fd, count);
 		
@@ -338,15 +353,15 @@ int32_t fs3_read(int16_t fd, void *buf, int32_t count) {
 
 	} 
 	// if the amount to be read is greater than the file length, then it just reads to the end of the file
-	else if (files[fd].position + count > files[fd].length && files[fd].position != files[fd].length){ //i dont think this ever gets invoked, test later
+	else if (files[fd].position + count > files[fd].length && files[fd].position != files[fd].length){ //DEBUG: (a: it doesn't) i dont think this ever gets invoked, test later
 		byteCount = files[fd].length - files[fd].position;
 
-		cmdblock = makeCmdBlock(FS3_OP_TSEEK, 0, files[fd].track[files[fd].index], 0);
+		cmdblock = makeCmdBlock(FS3_OP_TSEEK, 0, files[fd].ts[files[fd].index].track, 0);
 		FS3CmdBlk ret = network_fs3_syscall(cmdblock, NULL);
 		int validity = deconstCmdBlock(ret, &vals);
 		if(validity != 0) return -1;
 
-		cmdblock = makeCmdBlock(FS3_OP_RDSECT, files[fd].sector, 0, 0);
+		cmdblock = makeCmdBlock(FS3_OP_RDSECT, files[fd].ts[files[fd].index].sector, 0, 0);
 		ret = network_fs3_syscall(cmdblock, resizedBuff);
 		validity = deconstCmdBlock(ret, &vals);
 		if(validity != 0) return -1;
@@ -380,102 +395,121 @@ int32_t fs3_read(int16_t fd, void *buf, int32_t count) {
 
 int32_t fs3_write(int16_t fd, void *buf, int32_t count) {
 
-	void *resizedBuff  = (void *)malloc(FS3_SECTOR_SIZE + 1); //FS3_SECTOR_SIZE
+	void *resizedBuff;
+	resizedBuff = (char *)malloc(sizeof(char) * 1024 + 1); //FS3_SECTOR_SIZE //NOTE: source of a ton of memory leaks
 	byteCount = 0;
 	int offset = 0;
 
 	deconstVals vals;
 
+	if((files[fd].ts[files[fd].index].track == 0 && files[fd].ts[files[fd].index].sector == 0) || 0){
+		files[fd].ts[files[fd].index] = findEmptySector();
+	}
+
 	logMessage(LOG_INFO_LEVEL, "LENGTH: %d || COUNT: %d", files[fd].length, count);
 	//null value for isOpen indicates the file handle is bad
 	if (files[fd].isOpen != NULL && files[fd].isOpen == 1){
 		if(files[fd].length == 0){
-			files[fd].track[files[fd].index] = findEmptyTrack();
-			logMessage(FS3DriverLLevel, "FS3 driver: allocated fs3 track %d, sector 0 for fh/index %d/%d", files[fd].track[files[fd].index], files[fd].fileHandle, files[fd].index);
+			files[fd].ts[files[fd].index] = findEmptySector();
+			logMessage(FS3DriverLLevel, "FS3 driver: allocated fs3 track %d, sector 0 for fh/index %d/%d", files[fd].ts[files[fd].index].track, files[fd].fileHandle, files[fd].index);
 		}
 		if(files[fd].length >= files[fd].position + count && !((files[fd].position % FS3_SECTOR_SIZE) + count > FS3_SECTOR_SIZE)){ //if there is enough space in file for bytes to be written, than don't change its length
 			files[fd].length += 0;
-		} else if((files[fd].position % FS3_SECTOR_SIZE) + count > FS3_SECTOR_SIZE){
-			//NTD: update similar to how read function works with write span calculations and such (side note: sector utilization is poor, update track and sector allocation process)
-			//[1] seek to current track
-			logMessage(LOG_INFO_LEVEL, "WRITE Spanning 2 Tracks... LENGTH: %d || POSITION: %d", files[fd].length, files[fd].position);
-			cmdblock = makeCmdBlock(FS3_OP_TSEEK, 0, files[fd].track[files[fd].index], 0); //seeks to appropriate track
-			FS3CmdBlk ret = network_fs3_syscall(cmdblock, NULL);
-			//validate = malloc(sizeof(deconstVals)); //big source of memory leaks
-			int validity = deconstCmdBlock(ret, &vals);
-			if(validity != 0) return -1;
+		} else if((files[fd].position % FS3_SECTOR_SIZE) + count > FS3_SECTOR_SIZE){ //if read amount exceeds sector length
+			//TODO: done ... update similar to how read function works with write span calculations and such (side NOTE: sector utilization is poor, update track and sector allocation process)
+			
+			int span = (int)((files[fd].position + count) / FS3_SECTOR_SIZE) - (int)(files[fd].position / FS3_SECTOR_SIZE);
 
-			//[2] read in file to resized buff
-			void *tempc = fs3_get_cache(files[fd].track[files[fd].index], files[fd].sector);
-			if (tempc == NULL){
-				cmdblock = makeCmdBlock(FS3_OP_RDSECT, files[fd].sector, files[fd].track[files[fd].index], 0); //reads the sector into the resized buffer || ? need 'files[fd].track[files[fd].index]'
-				ret = network_fs3_syscall(cmdblock, resizedBuff);
+			logMessage(LOG_INFO_LEVEL, "WRITE Spanning %d sectors ", span);
+			
+			for (int i = 0; i < span; i++){
+				//[1] seek to current track
+				logMessage(LOG_INFO_LEVEL, "WRITE Spanning 2 Tracks... LENGTH: %d || POSITION: %d", files[fd].length, files[fd].position);
+				cmdblock = makeCmdBlock(FS3_OP_TSEEK, 0, files[fd].ts[files[fd].index].track, 0); //seeks to appropriate track
+				FS3CmdBlk ret = network_fs3_syscall(cmdblock, NULL);
 				int validity = deconstCmdBlock(ret, &vals);
 				if(validity != 0) return -1;
-			} else{
-					resizedBuff = (void *)tempc;
+
+				//[2] read in file to resized buff
+				void *tempc = fs3_get_cache(files[fd].ts[files[fd].index].track, files[fd].ts[files[fd].index].sector);
+				if (tempc == NULL){
+					cmdblock = makeCmdBlock(FS3_OP_RDSECT, files[fd].ts[files[fd].index].sector, files[fd].ts[files[fd].index].track, 0); //reads the sector into the resized buffer || ? need 'files[fd].track[files[fd].index]'
+					ret = network_fs3_syscall(cmdblock, resizedBuff);
+					int validity = deconstCmdBlock(ret, &vals);
+					if(validity != 0) return -1;
+				} else{
+						resizedBuff = (char *)tempc;
+				}
+				//[3] write only up to sector length
+				int adjustedCount = FS3_SECTOR_SIZE - files[fd].position % FS3_SECTOR_SIZE;
+				offset = adjustedCount;
+				//logMessage(LOG_INFO_LEVEL, "[track %d sector %d] Before: %s", files[fd].ts[files[fd].index].track, files[fd].ts[files[fd].index].sector, (void*)resizedBuff); //prints out buffers, debugging purposes
+				memcpy(resizedBuff + files[fd].position % FS3_SECTOR_SIZE, buf, adjustedCount);
+				if (tempc == NULL) fs3_put_cache(files[fd].ts[files[fd].index].track, files[fd].ts[files[fd].index].sector, resizedBuff);
+				
+				cmdblock = makeCmdBlock(FS3_OP_WRSECT, files[fd].ts[files[fd].index].sector, files[fd].ts[files[fd].index].track, 0); //writes buffer with new data into the correct sector
+				ret = network_fs3_syscall(cmdblock, resizedBuff);
+				validity = deconstCmdBlock(ret, &vals);
+				if(validity != 0) return -1;
+				
+				//[4] update position
+				count -= adjustedCount;
+				byteCount += adjustedCount;
+				files[fd].position += adjustedCount;
+
+				//[5] free and reinit resized buf
+				if(tempc == NULL) free(resizedBuff);
+				resizedBuff  = (char *)malloc(FS3_SECTOR_SIZE + 1); //FS3_SECTOR_SIZE
+
+				//REVIEW: new code additions for ts tuple implementation
+					files[fd].index += 1;
+					if((files[fd].ts[files[fd].index].track == 0 && files[fd].ts[files[fd].index].sector == 0) || 0){
+						files[fd].ts[files[fd].index] = findEmptySector();
+					}
+				
+
+				/* REVIEW: Old code
+				if(files[fd].sector + 1 == FS3_TRACK_SIZE){
+					files[fd].index += 1;
+					files[fd].track[files[fd].index] = findEmptyTrack();
+				} else{
+					files[fd].sector += 1;
+				} */
+				if(files[fd].length >= files[fd].position + count){
+					files[fd].length += 0;
+				} else{
+					files[fd].length += (files[fd].position - files[fd].length + count);
+					//files[fd].ts[files[fd].index] = findEmptySector();
+				}		
+				logMessage(FS3DriverLLevel, "FS3 driver: allocated fs3 track %d, sector 0 for fh/index %d/%d", files[fd].ts[files[fd].index].track, files[fd].fileHandle, files[fd].index);
 			}
-			//[3] write only up to sector length
-			int adjustedCount = FS3_SECTOR_SIZE - files[fd].position % FS3_SECTOR_SIZE;
-			offset = adjustedCount;
-			//logMessage(LOG_INFO_LEVEL, "[track %d sector %d] Before: %s", files[fd].track[files[fd].index], files[fd].sector, (void*)resizedBuff); //prints out buffers, debugging purposes
-			memcpy(resizedBuff + files[fd].position % FS3_SECTOR_SIZE, buf, adjustedCount);
-			if (tempc == NULL) fs3_put_cache(files[fd].track[files[fd].index], files[fd].sector, resizedBuff);
-			
-			cmdblock = makeCmdBlock(FS3_OP_WRSECT, files[fd].sector, files[fd].track[files[fd].index], 0); //writes buffer with new data into the correct sector
-			ret = network_fs3_syscall(cmdblock, resizedBuff);
-			validity = deconstCmdBlock(ret, &vals);
-			if(validity != 0) return -1;
-			
-			//[4] update position
-			count -= adjustedCount;
-			byteCount += adjustedCount;
-			files[fd].position += adjustedCount;
-
-			//[5] free and reinit resized buf
-			if(tempc == NULL) free(resizedBuff);
-			resizedBuff  = (void *)malloc(FS3_SECTOR_SIZE + 1); //FS3_SECTOR_SIZE
-
-
-			if(files[fd].sector + 1 == FS3_TRACK_SIZE){
-				files[fd].index += 1;
-				files[fd].track[files[fd].index] = findEmptyTrack();
-			} else{
-				files[fd].sector += 1;
-			}
-			if(files[fd].length >= files[fd].position + count){
-				files[fd].length += 0;
-			} else{
-				files[fd].length += (files[fd].position - files[fd].length + count);
-			}		
-			logMessage(FS3DriverLLevel, "FS3 driver: allocated fs3 track %d, sector 0 for fh/index %d/%d", files[fd].track[files[fd].index], files[fd].fileHandle, files[fd].index);
 		}
 		else {
 			files[fd].length += (files[fd].position - files[fd].length + count); //updates length to provide enough room for bytes to be written
 		}
 
 		logMessage(LOG_INFO_LEVEL, "LENGTH: %d || POSITION: %d", files[fd].length, files[fd].position);
-		cmdblock = makeCmdBlock(FS3_OP_TSEEK, 0, files[fd].track[files[fd].index], 0); //seeks to appropriate track
+		cmdblock = makeCmdBlock(FS3_OP_TSEEK, 0, files[fd].ts[files[fd].index].track, 0); //seeks to appropriate track
 		FS3CmdBlk ret = network_fs3_syscall(cmdblock, NULL);
 		int validity = deconstCmdBlock(ret, &vals);
 		if(validity != 0) return -1;
 
-		void *tempc = fs3_get_cache(files[fd].track[files[fd].index], files[fd].sector);
+		void *tempc = fs3_get_cache(files[fd].ts[files[fd].index].track, files[fd].ts[files[fd].index].sector);
 		if (tempc == NULL){
-			cmdblock = makeCmdBlock(FS3_OP_RDSECT, files[fd].sector, files[fd].track[files[fd].index], 0); //reads the sector into the resized buffer || ? need 'files[fd].track[files[fd].index]'
+			cmdblock = makeCmdBlock(FS3_OP_RDSECT, files[fd].ts[files[fd].index].sector, files[fd].ts[files[fd].index].track, 0); //reads the sector into the resized buffer || ? need 'files[fd].track[files[fd].index]'
 			ret = network_fs3_syscall(cmdblock, resizedBuff);
 			int validity = deconstCmdBlock(ret, &vals);
 			if(validity != 0) return -1;
 		} else{
-			resizedBuff = (void *)tempc;
+			resizedBuff = (char *)tempc;
 		}
 		//logMessage(LOG_INFO_LEVEL, "Before: %s", (void*)resizedBuff);
 		memcpy(resizedBuff + files[fd].position % FS3_SECTOR_SIZE, buf + offset, count); 
-		if (tempc == NULL) fs3_put_cache(files[fd].track[files[fd].index], files[fd].sector, resizedBuff);
+		if (tempc == NULL) fs3_put_cache(files[fd].ts[files[fd].index].track, files[fd].ts[files[fd].index].sector, resizedBuff);
 		//copies the bytes to be written over into the resized buffer 
 		//logMessage(LOG_INFO_LEVEL, "Dest: %s || Src: %s", (void*)resizedBuff, (void*)buf); //debug purposes
 		
-		cmdblock = makeCmdBlock(FS3_OP_WRSECT, files[fd].sector, files[fd].track[files[fd].index], 0); //writes buffer with new data into the correct sector
+		cmdblock = makeCmdBlock(FS3_OP_WRSECT, files[fd].ts[files[fd].index].sector, files[fd].ts[files[fd].index].track, 0); //writes buffer with new data into the correct sector
 		ret = network_fs3_syscall(cmdblock, resizedBuff);
 		validity = deconstCmdBlock(ret, &vals);
 		if(validity != 0) return -1;
@@ -503,11 +537,12 @@ int32_t fs3_seek(int16_t fd, uint32_t loc) {
 	if(files[fd].isOpen == 1){
 		if (loc > files[fd].length){
 			files[fd].length = loc; //if the location is outside of the files current length, update its size appropriatley
+
 		}
 		files[fd].position = loc;
-		files[fd].sector = (int)(files[fd].position / FS3_SECTOR_SIZE) % 1024;
-		files[fd].index = (int)(files[fd].sector/ FS3_TRACK_SIZE);
-		logMessage(LOG_INFO_LEVEL, "Updated position: %d (length: %d).. sect: %d", files[fd].position, files[fd].length, files[fd].sector); //update the file pointer to the location specified	
+		files[fd].index = (int)(files[fd].position / FS3_SECTOR_SIZE); //TODO: this should be index
+		//DEBUG: Is this working properly
+		logMessage(LOG_INFO_LEVEL, "Updated position: %d (length: %d).. sect: %d", files[fd].position, files[fd].length, files[fd].ts[files[fd].index].sector); //update the file pointer to the location specified	
 		return 0;
 	}
 	return -1;

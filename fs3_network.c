@@ -20,6 +20,7 @@
 // Project Includes
 #include <fs3_network.h>
 #include <fs3_driver.h>
+#include <cmpsc311_util.h>
 
 //
 //  Global data
@@ -37,7 +38,7 @@ typedef struct{
 // Network functions
 
 
-int mountoperations(FS3CmdBlk *cmdBlk){
+int mountoperations(FS3CmdBlk *cmdBlk, FS3CmdBlk *ret){
     fs3_network_address = (char *)FS3_DEFAULT_IP;
     fs3_network_port = FS3_DEFAULT_PORT;
     struct sockaddr_in v4;
@@ -67,35 +68,49 @@ int mountoperations(FS3CmdBlk *cmdBlk){
     printCmdBlock(*cmdBlk, 1);
 
     write(sock, cmdBlk, sizeof(cmdBlk));
+    read(sock, ret, sizeof(FS3CmdBlk));
 
-
-    return 0;
-}
-
-int seekoperations(FS3CmdBlk *cmdBlk){
-
-    printCmdBlock(*cmdBlk, 1);
-
-    write(sock, htons(cmdBlk), sizeof(FS3CmdBlk));
+    *ret = ntohll64(*ret);
 
     return 0;
 }
 
-int readoperations(FS3CmdBlk *cmdBlk, char *readbuffer){
+int seekoperations(FS3CmdBlk *cmdBlk, FS3CmdBlk *ret){
+
+    //printCmdBlock(*cmdBlk, 1);
+    *cmdBlk = htonll64(*cmdBlk);
+    write(sock, cmdBlk, sizeof(FS3CmdBlk));
+    //write(sock, cmdBlk, sizeof(FS3CmdBlk));
+    read(sock, ret, sizeof(FS3CmdBlk));
+
+    *ret = ntohll64(*ret);
+
+    return 0;
+}
+
+int readoperations(FS3CmdBlk *cmdBlk, FS3CmdBlk *ret, char *readbuffer){
     
     printCmdBlock(*cmdBlk, 1);
 
-    write(sock, htons(cmdBlk), sizeof(FS3CmdBlk));
-    read(sock, htons(readbuffer), sizeof(readbuffer));
+    *cmdBlk = htonll64(*cmdBlk);
+    write(sock, cmdBlk, sizeof(FS3CmdBlk));
+    read(sock, ret, sizeof(FS3CmdBlk));
+    *ret = ntohll64(*ret); 
+    read(sock, readbuffer, sizeof(char)*1024); //NOTE: maybe try padding
+    //*readbuffer = ntohll64(*readbuffer); //MAYBE: not needed
     
     return 0;
 }
 
-int writeoperations(FS3CmdBlk *cmdBlk){
+int writeoperations(FS3CmdBlk *cmdBlk, FS3CmdBlk *ret, char *writebuffer){
     
     printCmdBlock(*cmdBlk, 1);
-
-    write(sock, htons(cmdBlk), sizeof(FS3CmdBlk));
+    *cmdBlk = htonll64(*cmdBlk);
+    write(sock, cmdBlk, sizeof(FS3CmdBlk));
+    //*writebuffer = htonll64(*writebuffer); //MAYBE: not needed
+    write(sock, writebuffer, sizeof(char)*1024);  //NOTE: maybe try padding
+    read(sock, ret, sizeof(FS3CmdBlk));
+    *ret = ntohll64(*ret);
 
     return 0;
 }
@@ -124,39 +139,41 @@ int network_fs3_syscall(FS3CmdBlk cmd, FS3CmdBlk *ret, void *buf)
 {
     int opret;
     FS3CmdBlk blk = cmd;
+    FS3CmdBlk returned;
     deconstVals vals;
     if (deconstCmdBlock(cmd, &vals) != 0) return -1;
-    logMessage(LOG_OUTPUT_LEVEL, "OPCODE RECIEVED: %d", vals.opcode);
+    logMessage(LOG_INFO_LEVEL, "OPCODE RECIEVED: %d", vals.opcode);
     switch(vals.opcode){
         case 0:
             //mounting op
-            opret = mountoperations(&blk);
-            logMessage(LOG_OUTPUT_LEVEL, "Mounted Disk, Returned: %d ", opret);
+            opret = mountoperations(&blk, &ret);
+            logMessage(LOG_INFO_LEVEL, "Mounted Disk, Returned: %d ", opret);
             break;
         case 1:
             //seeking op
-            opret = seekoperations(&blk); //NEED TO IMPLEMENT
-            logMessage(LOG_OUTPUT_LEVEL, "Seeking to track: %d ", vals.trackNumber);
+            opret = seekoperations(&blk, &ret); //NEED TO IMPLEMENT
+            logMessage(LOG_INFO_LEVEL, "Seeking to track: %d ", vals.trackNumber);
             break;
         case 2:
             //reading op
-            opret = readoperations(&blk, buf); //NEED TO IMPLEMENT
-            logMessage(LOG_OUTPUT_LEVEL, "Reading from {sector: %d, track: %d}", vals.sectorNumber, vals.trackNumber);
+            opret = readoperations(&blk, &ret, buf); //NEED TO IMPLEMENT
+            logMessage(LOG_INFO_LEVEL, "Reading from {sector: %d, track: %d}", vals.sectorNumber, vals.trackNumber);
             break;
         case 3:
             //writing op
-            opret = writeoperations(&blk); //NEED TO IMPLEMENT
-            logMessage(LOG_OUTPUT_LEVEL, "Writing from {sector: %d, track: %d}", vals.sectorNumber, vals.trackNumber);
+            opret = writeoperations(&blk, &ret, buf); //NEED TO IMPLEMENT
+            logMessage(LOG_INFO_LEVEL, "Writing from {sector: %d, track: %d}", vals.sectorNumber, vals.trackNumber);
             break;
         case 4:
             //unmounting op
             opret = unmountoperations(&blk);
-            logMessage(LOG_OUTPUT_LEVEL, "Unmounted Disk, Returned: %d ", opret);
+            logMessage(LOG_INFO_LEVEL, "Unmounted Disk, Returned: %d ", opret);
             break;
         default:
             //invalid code
             return -1;
     }
+    //memcpy(ret, &returned, sizeof(FS3CmdBlk));
     return opret;
 }
 
