@@ -116,8 +116,8 @@ int writeoperations(FS3CmdBlk *cmdBlk, FS3CmdBlk *ret, char *writebuffer){
 }
 
 int unmountoperations(FS3CmdBlk *cmdBlk){
-    
-    write(sock, htons(cmdBlk), sizeof(cmdBlk));
+    *cmdBlk = htonll64(*cmdBlk);
+    write(sock, cmdBlk, sizeof(cmdBlk));
     close(sock);
     sock = -1;
 
@@ -176,5 +176,6 @@ int network_fs3_syscall(FS3CmdBlk cmd, FS3CmdBlk *ret, void *buf)
     //memcpy(ret, &returned, sizeof(FS3CmdBlk));
     return opret;
 }
+
 
 
