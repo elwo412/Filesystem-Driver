@@ -40,7 +40,7 @@ typedef struct{
 
 int mountoperations(FS3CmdBlk *cmdBlk, FS3CmdBlk *ret){
     if (fs3_network_address == NULL) fs3_network_address = (char *)FS3_DEFAULT_IP;
-    if (fs3_network_port == 0) fsfs3_network_port = FS3_DEFAULT_PORT;
+    if (fs3_network_port == 0) fs3_network_port = FS3_DEFAULT_PORT;
     struct sockaddr_in v4;
 
     v4.sin_family = AF_INET;
@@ -176,6 +176,5 @@ int network_fs3_syscall(FS3CmdBlk cmd, FS3CmdBlk *ret, void *buf)
     //memcpy(ret, &returned, sizeof(FS3CmdBlk));
     return opret;
 }
-
 
 
